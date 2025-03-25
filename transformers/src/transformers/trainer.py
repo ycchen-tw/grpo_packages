@@ -2509,47 +2509,53 @@ class Trainer:
 
                 # print(f'len(batch_samples): {len(batch_samples)}')
                 # print(f'batch_samples[0]: {batch_samples[0]}')
-                if self.state.global_step != self._last_loaded_step:
+                if self.state.global_step % self.num_iterations == 0:
                     if self.accelerator.is_main_process:
-                        print(f'Move model to vllm at step {self.state.global_step}')
-                    self._move_model_to_vllm()
-                    self._last_loaded_step = self.state.global_step
+                        print(f"Start caching completions at step {self.state.global_step}")
+                    if self.state.global_step != self._last_loaded_step:
+                        if self.accelerator.is_main_process:
+                            print(f'Move model to vllm at step {self.state.global_step}')
+                        self._move_model_to_vllm()
+                        self._last_loaded_step = self.state.global_step
+                        if self.accelerator.is_main_process:
+                            print(f'Move model to vllm at step {self.state.global_step} done')
+                    from trl.data_utils import maybe_apply_chat_template
+                    from accelerate.utils import gather_object, broadcast_object_list
+                    prompts = sum([[x["prompt"] for x in xs] for xs in batch_samples], [])
+                    prompts_text = sum([[maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in xs] for xs in batch_samples], [])
+                    all_prompts_text = gather_object(prompts_text)
                     if self.accelerator.is_main_process:
-                        print(f'Move model to vllm at step {self.state.global_step} done')
-                from trl.data_utils import maybe_apply_chat_template
-                from accelerate.utils import gather_object, broadcast_object_list
-                prompts = sum([[x["prompt"] for x in xs] for xs in batch_samples], [])
-                prompts_text = sum([[maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in xs] for xs in batch_samples], [])
-                all_prompts_text = gather_object(prompts_text)
-                if self.accelerator.is_main_process:
-                    print(f'len(all_prompts_text): {len(all_prompts_text)}')
-                ordered_set_of_prompts = all_prompts_text[:: self.num_generations]
-                if self.accelerator.is_main_process:
-                    print(f'len(ordered_set_of_prompts): {len(ordered_set_of_prompts)}')
-                if self.accelerator.is_main_process:
-                    completion_ids = self.vllm_client.generate(
-                        prompts=ordered_set_of_prompts,
-                        n=self.num_generations,
-                        repetition_penalty=self.repetition_penalty,
-                        temperature=self.temperature,
-                        top_p=self.top_p,
-                        top_k=-1 if self.top_k is None else self.top_k,
-                        min_p=0.0 if self.min_p is None else self.min_p,
-                        max_tokens=self.max_completion_length,
-                        guided_decoding_regex=self.guided_decoding_regex,
-                    )
-                else:
-                    completion_ids = [None] * len(all_prompts_text)
-                completion_ids = broadcast_object_list(completion_ids, from_process=0)
-                process_slice = slice(
-                    self.accelerator.process_index * len(prompts),
-                    (self.accelerator.process_index + 1) * len(prompts),
-                )
-                completion_ids = completion_ids[process_slice]
-                self.completion_ids_buffer = completion_ids
-                self.use_completion_ids_buffer = True
+                        print(f'len(all_prompts_text): {len(all_prompts_text)}')
+                        
+                    ordered_set_of_prompts = all_prompts_text[:: self.num_generations]
+                    if self.accelerator.is_main_process:
+                        print(f'len(ordered_set_of_prompts): {len(ordered_set_of_prompts)}')
 
-                print(f"Process {self.accelerator.process_index} has {len(completion_ids)} completion ids")
+                    if self.accelerator.is_main_process:
+                        completion_ids = self.vllm_client.generate(
+                            prompts=ordered_set_of_prompts,
+                            n=self.num_generations,
+                            repetition_penalty=self.repetition_penalty,
+                            temperature=self.temperature,
+                            top_p=self.top_p,
+                            top_k=-1 if self.top_k is None else self.top_k,
+                            min_p=0.0 if self.min_p is None else self.min_p,
+                            max_tokens=self.max_completion_length,
+                            guided_decoding_regex=self.guided_decoding_regex,
+                        )
+                    else:
+                        completion_ids = [None] * len(all_prompts_text)
+                    completion_ids = broadcast_object_list(completion_ids, from_process=0)
+                    process_slice = slice(
+                        self.accelerator.process_index * len(prompts),
+                        (self.accelerator.process_index + 1) * len(prompts),
+                    )
+                    completion_ids = completion_ids[process_slice]
+                    self.completion_ids_buffer = completion_ids
+                    self.use_completion_ids_buffer = True
+
+                    if self.accelerator.is_main_process:    
+                        print(f"Process {self.accelerator.process_index} has {len(completion_ids)} completion ids")
 
                 for i, inputs in enumerate(batch_samples):
                     step += 1
