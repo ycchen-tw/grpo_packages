@@ -2510,8 +2510,12 @@ class Trainer:
                 # print(f'len(batch_samples): {len(batch_samples)}')
                 # print(f'batch_samples[0]: {batch_samples[0]}')
                 if self.state.global_step != self._last_loaded_step:
+                    if self.accelerator.is_main_process:
+                        print(f'Move model to vllm at step {self.state.global_step}')
                     self._move_model_to_vllm()
                     self._last_loaded_step = self.state.global_step
+                    if self.accelerator.is_main_process:
+                        print(f'Move model to vllm at step {self.state.global_step} done')
                 from trl.data_utils import maybe_apply_chat_template
                 from accelerate.utils import gather_object, broadcast_object_list
                 prompts = sum([[x["prompt"] for x in xs] for xs in batch_samples], [])
