@@ -2510,26 +2510,32 @@ class Trainer:
                 # print(f'len(batch_samples): {len(batch_samples)}')
                 # print(f'batch_samples[0]: {batch_samples[0]}')
                 if self.state.global_step % self.num_iterations == 0:
-                    if self.accelerator.is_main_process:
-                        print(f"Start caching completions at step {self.state.global_step}")
+                    # if self.accelerator.is_main_process:
+                    #     print(f"Start caching completions at step {self.state.global_step}")
                     if self.state.global_step != self._last_loaded_step:
-                        if self.accelerator.is_main_process:
-                            print(f'Move model to vllm at step {self.state.global_step}')
+                        # if self.accelerator.is_main_process:
+                        #     print(f'Move model to vllm at step {self.state.global_step}')
                         self._move_model_to_vllm()
                         self._last_loaded_step = self.state.global_step
-                        if self.accelerator.is_main_process:
-                            print(f'Move model to vllm at step {self.state.global_step} done')
+                        # if self.accelerator.is_main_process:
+                        #     print(f'Move model to vllm at step {self.state.global_step} done')
                     from trl.data_utils import maybe_apply_chat_template
                     from accelerate.utils import gather_object, broadcast_object_list
                     prompts = sum([[x["prompt"] for x in xs] for xs in batch_samples], [])
                     prompts_text = sum([[maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in xs] for xs in batch_samples], [])
                     all_prompts_text = gather_object(prompts_text)
-                    if self.accelerator.is_main_process:
-                        print(f'len(all_prompts_text): {len(all_prompts_text)}')
-                        
-                    ordered_set_of_prompts = all_prompts_text[:: self.num_generations]
-                    if self.accelerator.is_main_process:
-                        print(f'len(ordered_set_of_prompts): {len(ordered_set_of_prompts)}')
+                    # if self.accelerator.is_main_process:
+                    #     print(f'len(all_prompts_text): {len(all_prompts_text)}')
+                    #     for i, p in enumerate(all_prompts_text):
+                    #         print(f'{i:03d}', p[:50].replace("\n", "\\n"))
+                    #     print('='*100)
+                    
+                    n_prompt = self.args.per_device_train_batch_size * self.args.gradient_accumulation_steps
+                    ordered_set_of_prompts = all_prompts_text[:n_prompt]
+                    # if self.accelerator.is_main_process:
+                    #     print(f'len(ordered_set_of_prompts): {len(ordered_set_of_prompts)}')
+                    #     for i, p in enumerate(ordered_set_of_prompts):
+                    #         print(f'{i:03d}', p[:50].replace("\n", "\\n"))
 
                     if self.accelerator.is_main_process:
                         completion_ids = self.vllm_client.generate(
@@ -2546,16 +2552,22 @@ class Trainer:
                     else:
                         completion_ids = [None] * len(all_prompts_text)
                     completion_ids = broadcast_object_list(completion_ids, from_process=0)
-                    process_slice = slice(
-                        self.accelerator.process_index * len(prompts),
-                        (self.accelerator.process_index + 1) * len(prompts),
-                    )
-                    completion_ids = completion_ids[process_slice]
+                    # if self.accelerator.is_main_process:
+                    #     print(f"Process {self.accelerator.process_index} has {len(completion_ids)} completion ids")
+                    #     for i, c in enumerate(completion_ids):
+                    #         print(f'{i:03d}', self.processing_class.decode(c, skip_special_tokens=True)[:100].replace("\n", "\\n"))
+                    #     print('='*100)
+                    # process_slice = slice(
+                    #     self.accelerator.process_index * len(prompts),
+                    #     (self.accelerator.process_index + 1) * len(prompts),
+                    # )
+                    # completion_ids = completion_ids[process_slice]
+                    completion_ids = completion_ids[self.accelerator.process_index::self.num_generations]
                     self.completion_ids_buffer = completion_ids
                     self.use_completion_ids_buffer = True
 
-                    if self.accelerator.is_main_process:    
-                        print(f"Process {self.accelerator.process_index} has {len(completion_ids)} completion ids")
+                    # if self.accelerator.is_main_process:    
+                    #     print(f"Process {self.accelerator.process_index} has {len(completion_ids)} completion ids")
 
                 for i, inputs in enumerate(batch_samples):
                     step += 1

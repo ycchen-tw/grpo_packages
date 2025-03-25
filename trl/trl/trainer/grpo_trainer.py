@@ -693,7 +693,7 @@ class GRPOTrainer(Trainer):
         # Generate completions using either vLLM or regular generation
         if self.use_completion_ids_buffer:
             completion_ids = [self.completion_ids_buffer[self._step % self.args.gradient_accumulation_steps]]
-            print(f"Process {self.accelerator.process_index} has {len(completion_ids)} completion ids (from buffer)")
+            # print(f"Process {self.accelerator.process_index} has {len(completion_ids)} completion ids (from buffer)")
             # Pad the completions, and concatenate them with the prompts
             completion_ids = [torch.tensor(ids, device=device) for ids in completion_ids]
             completion_ids = pad(completion_ids, padding_value=self.processing_class.pad_token_id)
